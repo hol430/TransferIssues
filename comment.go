@@ -17,7 +17,6 @@ type Comment struct {
 func (c *Comment) ToString() string {
 	var str strings.Builder
 	
-	//str.WriteString(fmt.Sprintf("Comment ID: #%d\n", c.id))
 	str.WriteString(fmt.Sprintf("Author: %v\n", c.author))
 	str.WriteString(fmt.Sprintf("Date: %v\n\n", c.date))
 	str.WriteString(c.text)

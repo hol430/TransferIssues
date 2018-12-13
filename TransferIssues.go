@@ -16,6 +16,7 @@ const rootUrl = "https://www.apsim.info/BugTracker/"
 const dateFormat = "1/2/2006 3:4:5 PM"
 const commentDateFormat =  "2006-1-2 3:4 PM"
 const shortCommentDateFormat = "2006-1-2"
+var blacklistedComments = []int64{ 686, 688, 32121, 32124, 32125, 32284, 32287, 32295, 32311, 32331, 32355, 32380, 32394, 32396, 32397, 32420, 32479, 32544, 32605, 32683, 32717, 32774, 32775, 32848, 32767, 32938, 32939, 32984, 33012, 33438, 33552, 33888, 33926, 33950, 33951, 34103, 34108, 34109, 34113, 34116, 34128, 34131, 34132, 33525, 33542, 33666, 33945, 33955, 34122, 34134 }
 // 1/2/2006 3:4:5 PM
 
 // Parses an int64 from a string.
@@ -39,7 +40,56 @@ func contains(arr []string, values ...string) bool {
 	return false
 }
 
-// Gets the comments for a particular bug ID.
+// Loads the page which contains the list of bugs.
+func loadBugList() *goquery.Document {
+	// We want to load print_bugs.aspx, however this page relies on cookies
+	// which are set in bugs.aspx. Therefore, we load bugs.aspx and reuse the
+	// cookies in the response for the request to print_bugs.aspx.
+	
+	// Load bugs.aspx
+	response, err := http.Get(rootUrl + "bugs.aspx?qu_id=1")
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	// Create a new request to print_bugs.aspx (but don't invoke the request
+	// just yet).
+	request, err := http.NewRequest("GET", rootUrl + "print_bugs.aspx", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	// Copy all cookies from the response to the original request over to the
+	// request to print_bugs.aspx
+	for _, cookie := range response.Cookies() {
+		request.AddCookie(cookie)
+	}
+	
+	// Invoke the request to print_bugs.aspx
+	client := &http.Client{}
+	response, err = client.Do(request)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	// Load a goquery document from the response.
+	doc, err := goquery.NewDocumentFromResponse(response)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return doc
+}
+
+func isBlackListed(id int64) bool {
+	for _, b := range blacklistedComments {
+		if id == b {
+			return true
+		}
+	}
+	return false
+}
+
+// Gets the comments for a particular bug ID.cls
 // Returns a slice of comments.
 func getComments(bugId int64) (comments []Comment) {
 	threadDoc, err := goquery.NewDocument(rootUrl + "edit_bug.aspx?id=" + strconv.Itoa(int(bugId)))
@@ -111,56 +161,12 @@ func getComments(bugId int64) (comments []Comment) {
 		}
 		
 		// Skip this particular comment...
-		if comment.id != 33552 {
+		if !isBlackListed(comment.id) {
 			// Prepend the comment to the list of comments.
 			comments = append([]Comment { comment }, comments...)
 		}
 	})
 	return
-}
-
-// Loads the list of bugs.
-func loadBugList() *goquery.Document {
-	// We want to load print_bugs.aspx, however this page relies on cookies
-	// which are set in bugs.aspx. Therefore, we load bugs.aspx and reuse the
-	// cookies in the response for the request to print_bugs.aspx.
-	
-	// Load bugs.aspx
-	response, err := http.Get(rootUrl + "bugs.aspx?qu_id=1")
-	if err != nil {
-		log.Fatal(err)
-	}
-	doc, err := goquery.NewDocumentFromResponse(response)
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	// Create a new request to print_bugs.aspx (but don't invoke the request
-	// just yet).
-	request, err := http.NewRequest("GET", rootUrl + "print_bugs.aspx", nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	// Copy all cookies from the response to the original request over to the
-	// request to print_bugs.aspx
-	for _, cookie := range response.Cookies() {
-		request.AddCookie(cookie)
-	}
-	
-	// Invoke the request to print_bugs.aspx
-	client := &http.Client{}
-	response, err = client.Do(request)
-	if err != nil {
-		log.Fatal(err)
-	}
-	
-	// Load a goquery document from the response.
-	doc, err = goquery.NewDocumentFromResponse(response)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return doc
 }
 
 func main() {
