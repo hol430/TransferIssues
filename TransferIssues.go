@@ -1,20 +1,27 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
     "fmt"
+	//"github.com/octokit/go-octokit/octokit"
 	"github.com/PuerkitoBio/goquery"
+	"io"
 	"io/ioutil"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"strconv"
 	"time"
 )
 
+// 1/2/2006 3:4:5 PM
 const dateFormat = "1/2/2006 3:4:5 PM"
+// Dates on comments are printed differently to dates on bugs.
 const commentDateFormat =  "2006-1-2 3:4 PM"
+// There is one comment which is a special snowflake.
 const shortCommentDateFormat = "2006-1-2"
 
 // GitHub OAuth Authorization URL
@@ -24,7 +31,6 @@ const authorisationUrl =  "http://github.com/login/oauth/authorize"
 const accessTokenUrl =  "https://github.com/login/oauth/access_token"
 
 var blacklistedComments = []int64{ 686, 688, 32121, 32124, 32125, 32284, 32287, 32295, 32311, 32331, 32355, 32380, 32394, 32396, 32397, 32420, 32479, 32544, 32605, 32683, 32717, 32774, 32775, 32848, 32767, 32938, 32939, 32984, 33012, 33438, 33552, 33888, 33926, 33950, 33951, 34103, 34108, 34109, 34113, 34116, 34128, 34131, 34132, 33525, 33542, 33666, 33945, 33955, 34122, 34134 }
-// 1/2/2006 3:4:5 PM
 
 // Returns the smaller of two integers.
 // x: The first integer.
@@ -110,6 +116,8 @@ func loadBugList(rootUrl string) *goquery.Document {
 	return doc
 }
 
+// Checks if a comment is blacklisted.
+// id: ID of the comment.
 func isBlackListed(id int64) bool {
 	for _, b := range blacklistedComments {
 		if id == b {
@@ -119,25 +127,15 @@ func isBlackListed(id int64) bool {
 	return false
 }
 
-// Reads client ID/Secret from a file on disk.
+// Reads a secret from a file on disk.
 // file: Path to the file on disk.
-func getSecret(file string) (id, secret string) {
-	credentials, err := ioutil.ReadFile(file)
+func getSecret(file string) string {
+	secret, err := ioutil.ReadFile(file)
 	
 	if err != nil {
 		log.Fatal(err)
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(credentials)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "client_id=") {
-			id = strings.TrimPrefix(line, "client_id=")
-		}
-		if strings.HasPrefix(line, "client_secret=") {
-			secret = strings.TrimPrefix(line, "client_secret=")
-		}
-	}
-	return
+	return strings.TrimSpace(string(secret))
 }
 
 // Gets the comments for a particular bug ID.cls
@@ -265,16 +263,65 @@ func getBugs(verbosity, n int, url string) (bugs []Bug) {
 	return
 }
 
+// Uploads a file.
+// url: URL to which the file will be uploaded.
+// path: Path of the file to be uploaded.
+func uploadFile(url string, path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", filepath.Base(path))
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return err
+	}
+	writer.Close()
+	
+	request, _ := http.NewRequest("POST", url, body)
+	request.Header.Add("Content-Type", writer.FormDataContentType())
+	client := &http.Client{}
+	response, err := client.Do(request)
+	if err != nil {
+		fmt.Println("Error")
+		log.Fatal(err)
+	}
+	body = &bytes.Buffer{}
+	_, err = body.ReadFrom(response.Body)
+	if err != nil {
+		return err
+	}
+	response.Body.Close()
+	fmt.Println(response.StatusCode)
+	fmt.Println(response.Header)
+	fmt.Println(body)
+	
+	return nil
+}
+
 // Posts a bug on GitHub
 // bug: The bug to be posted on GitHub.
 // org: Name of the organisation/owner of the repo.
 // repo: Name of the GitHub repo to which the bug will be posted.
 // credFile: Path to file on disk containing an access token for a GitHub account.
 func postBug(bug Bug, org, repo, credFile string) {
-	// id, secret := getSecret(credFile)
+	//auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	//client := octokit.NewClient(auth)
 	for _, comment := range bug.comments {
 		if comment.attachment != (Attachment{}) {
-			comment.attachment.Download(os.TempDir())
+			path, err := comment.attachment.Download(os.TempDir())
+			if err != nil {
+				fmt.Printf("Error downloading file %v for bug #%d!\n", comment.attachment.name, bug.id)
+				log.Fatal(err)
+			}
+			uploadFile("https://www.apsim.info/BugAttachments", path)
 		}
 	}
 }

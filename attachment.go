@@ -26,32 +26,32 @@ func (a *Attachment) ToString() string {
 // Downloads a file at a given URL.
 // path: path to where the file will be downloaded.
 // url: URL of the file.
-func (a *Attachment) downloadFile(path string, url string) error {
+func (a *Attachment) downloadFile(path string, url string) (string, error) {
 	// Create the file.
 	out, err := os.Create(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer out.Close()
 	
 	// Download the file.
 	response, err := http.Get(url)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer response.Body.Close()
 	
 	// Write the downloaded data to the file.
 	_, err = io.Copy(out, response.Body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	fmt.Printf("Successfully downloaded file to %v\n", path)
-	return nil
+	return path, nil
 }
 
 // Downlaods the attachment to a given directory.
 // dir: File will be downloaded to this directory.
-func (a *Attachment) Download(dir string) error {
+func (a *Attachment) Download(dir string) (string, error) {
 	return a.downloadFile(path.Join(dir, a.name), a.url)
 }
