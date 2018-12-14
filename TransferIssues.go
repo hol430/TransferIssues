@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
     "fmt"
 	"github.com/PuerkitoBio/goquery"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +16,13 @@ import (
 const dateFormat = "1/2/2006 3:4:5 PM"
 const commentDateFormat =  "2006-1-2 3:4 PM"
 const shortCommentDateFormat = "2006-1-2"
+
+// GitHub OAuth Authorization URL
+const authorisationUrl =  "http://github.com/login/oauth/authorize"
+
+// GitHub OAuth Access Token URL
+const accessTokenUrl =  "https://github.com/login/oauth/access_token"
+
 var blacklistedComments = []int64{ 686, 688, 32121, 32124, 32125, 32284, 32287, 32295, 32311, 32331, 32355, 32380, 32394, 32396, 32397, 32420, 32479, 32544, 32605, 32683, 32717, 32774, 32775, 32848, 32767, 32938, 32939, 32984, 33012, 33438, 33552, 33888, 33926, 33950, 33951, 34103, 34108, 34109, 34113, 34116, 34128, 34131, 34132, 33525, 33542, 33666, 33945, 33955, 34122, 34134 }
 // 1/2/2006 3:4:5 PM
 
@@ -108,6 +117,27 @@ func isBlackListed(id int64) bool {
 		}
 	}
 	return false
+}
+
+// Reads client ID/Secret from a file on disk.
+// file: Path to the file on disk.
+func getSecret(file string) (id, secret string) {
+	credentials, err := ioutil.ReadFile(file)
+	
+	if err != nil {
+		log.Fatal(err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(credentials)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "client_id=") {
+			id = strings.TrimPrefix(line, "client_id=")
+		}
+		if strings.HasPrefix(line, "client_secret=") {
+			secret = strings.TrimPrefix(line, "client_secret=")
+		}
+	}
+	return
 }
 
 // Gets the comments for a particular bug ID.cls
@@ -235,6 +265,20 @@ func getBugs(verbosity, n int, url string) (bugs []Bug) {
 	return
 }
 
+// Posts a bug on GitHub
+// bug: The bug to be posted on GitHub.
+// org: Name of the organisation/owner of the repo.
+// repo: Name of the GitHub repo to which the bug will be posted.
+// credFile: Path to file on disk containing an access token for a GitHub account.
+func postBug(bug Bug, org, repo, credFile string) {
+	// id, secret := getSecret(credFile)
+	for _, comment := range bug.comments {
+		if comment.attachment != (Attachment{}) {
+			comment.attachment.Download(os.TempDir())
+		}
+	}
+}
+
 func main() {
 	rootUrl := "https://www.apsim.info/BugTracker/"
 	verbosity := 1
@@ -244,6 +288,8 @@ func main() {
 		arg := os.Args[i]
 		if arg == "-q" || arg == "--quiet" {
 			verbosity--
+		} else if arg == "-v" || arg == "--verbose" {
+			verbosity++
 		} else if arg == "-n" {
 			if i + 1 < len(os.Args) {
 				i++
@@ -264,7 +310,10 @@ func main() {
 	// Get list of bugs.
 	bugs := getBugs(verbosity, maxBugs, rootUrl)
 	for _, bug := range bugs {
-		fmt.Println(bug.ToString())
-		fmt.Println("--------------------------------------------")
+		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt")
+		if verbosity > 1 {
+			fmt.Println(bug.ToString())
+			fmt.Println("--------------------------------------------")
+		}
 	}
 }

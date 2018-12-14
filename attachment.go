@@ -46,7 +46,7 @@ func (a *Attachment) downloadFile(path string, url string) error {
 	if err != nil {
 		return err
 	}
-	
+	fmt.Printf("Successfully downloaded file to %v\n", path)
 	return nil
 }
 
