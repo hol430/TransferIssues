@@ -2,6 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path"
 	"strings"
 )
 
@@ -14,8 +18,40 @@ type Attachment struct {
 func (a *Attachment) ToString() string {
 	var str strings.Builder
 	
-	str.WriteString(fmt.Sprintf("Attachment Name: %v\n", a.name))
-	str.WriteString(fmt.Sprintf("Size: %d\n", a.size))
-	str.WriteString(fmt.Sprintf("URL: %v\n", a.url))
+	str.WriteString(fmt.Sprintf("![%v](%v)\n", a.name, a.url))
+	str.WriteString(fmt.Sprintf("Size: %d", a.size))
 	return str.String()
+}
+
+// Downloads a file at a given URL.
+// path: path to where the file will be downloaded.
+// url: URL of the file.
+func (a *Attachment) downloadFile(path string, url string) error {
+	// Create the file.
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	
+	// Download the file.
+	response, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	
+	// Write the downloaded data to the file.
+	_, err = io.Copy(out, response.Body)
+	if err != nil {
+		return err
+	}
+	
+	return nil
+}
+
+// Downlaods the attachment to a given directory.
+// dir: File will be downloaded to this directory.
+func (a *Attachment) Download(dir string) error {
+	return a.downloadFile(path.Join(dir, a.name), a.url)
 }

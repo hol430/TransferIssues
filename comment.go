@@ -11,7 +11,7 @@ type Comment struct {
 	author			string
 	date			time.Time
 	text			string
-	attachments		[]Attachment
+	attachment		Attachment
 }
 
 func (c *Comment) ToString() string {
@@ -19,9 +19,10 @@ func (c *Comment) ToString() string {
 	
 	str.WriteString(fmt.Sprintf("Author: %v\n", c.author))
 	str.WriteString(fmt.Sprintf("Date: %v\n\n", c.date))
-	str.WriteString(c.text)
-	for _, a := range c.attachments {
-		str.WriteString("\n\n" + a.ToString() + "\n\n")
+	if c.attachment == (Attachment{}) {
+		str.WriteString(c.text)
+	} else {
+		str.WriteString(c.attachment.ToString())
 	}
 	return str.String()
 }
