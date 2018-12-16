@@ -227,17 +227,21 @@ func getBugs(verbosity, n int, url string) (bugs []Bug) {
 	}
 	
 	bugRows := doc.Find("table.bugt tr")
-	numBugs := min(n, bugRows.IndexOfSelection(bugRows.Last()))
+	numBugs := bugRows.IndexOfSelection(bugRows.Last())
+	if n > 0 && n < numBugs {
+		numBugs = n
+	}
+	
 	bugRows.Each(func(index int, row *goquery.Selection) {
 		if verbosity > 0 {
 			fmt.Printf("Processing bugs...%.2f%%\r", float64(index) / float64(numBugs) * 100.0)
 		}
 		// Skip the first row of the table, as it doesn't contain bugs.
-		if index > 0 && (index < 0 || index < n) {
+		if index > 0 && index < numBugs {
 			bugId := parseInt(row.Find("td:nth-child(1)").Text())
 			bugDate, err := time.Parse(dateFormat , row.Find("td:nth-child(8)").Text())
 			if err != nil {
-				fmt.Printf("Error parsing date in bug #%d", bugId)
+				fmt.Printf("Error parsing date in bug #%d\n", bugId)
 				// Bail immediately if we fail to parse a date.
 				log.Fatal(err)
 			}
