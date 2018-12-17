@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
     "fmt"
 	//"github.com/octokit/go-octokit/octokit"
+	"github.com/jlaffaye/ftp"
 	"github.com/PuerkitoBio/goquery"
-	"io"
 	"io/ioutil"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"strconv"
@@ -41,6 +41,17 @@ func min(x, y int) int {
 	}
 	return y
 }
+
+// Creates a directory if it doesn't exist.
+func CreateDirIfNotExist(dir string) {
+      if _, err := os.Stat(dir); os.IsNotExist(err) {
+              err = os.MkdirAll(dir, 0755)
+              if err != nil {
+                      panic(err)
+              }
+      }
+}
+
 // Parses an int64 from a string.
 func parseInt(str string) int64 {
 	result, err := strconv.ParseInt(str, 0, 64)
@@ -267,47 +278,68 @@ func getBugs(verbosity, n int, url string) (bugs []Bug) {
 	return
 }
 
-// Uploads a file.
-// url: URL to which the file will be uploaded.
-// path: Path of the file to be uploaded.
-func uploadFile(url string, path string) error {
-	file, err := os.Open(path)
+// Reads credentials from a text file.
+func getCredentials() (username string, password string) {
+	credentials, err := ioutil.ReadFile("credentials.dat")
+	
 	if err != nil {
-		return err
+		log.Fatal(err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(credentials)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "username=") {
+			username = strings.TrimPrefix(line, "username=")
+		}
+		if strings.HasPrefix(line, "password=") {
+			password = strings.TrimPrefix(line, "password=")
+		}
+	}
+	return
+}
+
+// Uploads a file to a remote server via FTP.
+// remote: IP or hostname of the server.
+// port: Port number (probably 21).
+// webRoot: Root web directory.
+// remoteDir: Directory to which the file will be copied. Relative to webRoot.
+// localFile: path to the local file to be copied.
+// user: username for the server.
+// pass: password for the server.
+// Returns the address of the remote file.
+func uploadFileFtp(remote, port, webRoot, remoteDir, localFile, user, pass string) (string, error) {
+	conn, err := ftp.DialTimeout(remote + ":" + port, 5 * time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Quit()
+	
+	err = conn.Login(user, pass)
+	if err != nil {
+		return "", err
+	}
+	
+	err = conn.ChangeDir(webRoot)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	// This will return an error if the directory already exists.
+	_ = conn.MakeDir(remoteDir)
+	
+	file, err := os.Open(localFile)
+	if err != nil {
+		return "", err
 	}
 	defer file.Close()
 	
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", filepath.Base(path))
+	remotePath := path.Join(remoteDir, filepath.Base(localFile))
+	err = conn.Stor(remotePath, file)
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = io.Copy(part, file)
-	if err != nil {
-		return err
-	}
-	writer.Close()
 	
-	request, _ := http.NewRequest("POST", url, body)
-	request.Header.Add("Content-Type", writer.FormDataContentType())
-	client := &http.Client{}
-	response, err := client.Do(request)
-	if err != nil {
-		fmt.Println("Error")
-		log.Fatal(err)
-	}
-	body = &bytes.Buffer{}
-	_, err = body.ReadFrom(response.Body)
-	if err != nil {
-		return err
-	}
-	response.Body.Close()
-	fmt.Println(response.StatusCode)
-	fmt.Println(response.Header)
-	fmt.Println(body)
-	
-	return nil
+	return strings.Trim(remote, "/") + "/" + remotePath, nil
 }
 
 // Posts a bug on GitHub
@@ -315,17 +347,27 @@ func uploadFile(url string, path string) error {
 // org: Name of the organisation/owner of the repo.
 // repo: Name of the GitHub repo to which the bug will be posted.
 // credFile: Path to file on disk containing an access token for a GitHub account.
-func postBug(bug Bug, org, repo, credFile string) {
+func postBug(bug Bug, org, repo, credFile string, extensions *[]string) {
 	//auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
 	//client := octokit.NewClient(auth)
-	for _, comment := range bug.comments {
+	tempDir := path.Join(os.TempDir(), "TransferIssues")
+	CreateDirIfNotExist(tempDir)
+	for i, comment := range bug.comments {
 		if comment.attachment != (Attachment{}) {
-			path, err := comment.attachment.Download(os.TempDir())
+			localFile, err := comment.attachment.Download(tempDir)
+			extension := path.Ext(localFile)
+			if !contains(*extensions, extension) {
+				*extensions = append(*extensions, extension)
+			}
 			if err != nil {
 				fmt.Printf("Error downloading file %v for bug #%d!\n", comment.attachment.name, bug.id)
 				log.Fatal(err)
 			}
-			uploadFile("https://www.apsim.info/BugAttachments", path)
+			user, pass := getCredentials()
+			bug.comments[i].attachment.url, err = uploadFileFtp("www.apsim.info", "21", "APSIM", "BugAttachments/" + strconv.Itoa(int(comment.id)), localFile, user, pass)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 }
@@ -360,10 +402,25 @@ func main() {
 	
 	// Get list of bugs.
 	bugs := getBugs(verbosity, maxBugs, rootUrl)
-	for _, bug := range bugs {
-		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt")
-		if verbosity > 1 {
-			fmt.Println(bug.ToString())
+	var extensions []string
+	for i, bug := range bugs {
+		if verbosity > 0 {
+			fmt.Printf("Uploading attachments...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
+		}
+		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", &extensions)
+	}
+	fmt.Println("Uploading attachments...Finished!")
+	if verbosity > 0 {
+		fmt.Println("Extensions:")
+		for _, ext := range extensions {
+			fmt.Println(ext)
+		}
+	}
+	
+	if verbosity > 1 {
+		
+		for _, bug := range bugs {
+			fmt.Println(bug.ToLongString())
 			fmt.Println("--------------------------------------------")
 		}
 	}

@@ -46,12 +46,11 @@ func (a *Attachment) downloadFile(path string, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Printf("Successfully downloaded file to %v\n", path)
 	return path, nil
 }
 
 // Downlaods the attachment to a given directory.
 // dir: File will be downloaded to this directory.
 func (a *Attachment) Download(dir string) (string, error) {
-	return a.downloadFile(path.Join(dir, a.name), a.url)
+	return a.downloadFile(path.Join(dir, strings.Replace(a.name, " ", "_", -1)), a.url)
 }
