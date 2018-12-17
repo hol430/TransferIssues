@@ -347,7 +347,7 @@ func uploadFileFtp(remote, port, webRoot, remoteDir, localFile, user, pass strin
 // org: Name of the organisation/owner of the repo.
 // repo: Name of the GitHub repo to which the bug will be posted.
 // credFile: Path to file on disk containing an access token for a GitHub account.
-func postBug(bug Bug, org, repo, credFile string, extensions *[]string) {
+func postBug(bug Bug, org, repo, credFile string) {
 	//auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
 	//client := octokit.NewClient(auth)
 	tempDir := path.Join(os.TempDir(), "TransferIssues")
@@ -355,10 +355,6 @@ func postBug(bug Bug, org, repo, credFile string, extensions *[]string) {
 	for i, comment := range bug.comments {
 		if comment.attachment != (Attachment{}) {
 			localFile, err := comment.attachment.Download(tempDir)
-			extension := path.Ext(localFile)
-			if !contains(*extensions, extension) {
-				*extensions = append(*extensions, extension)
-			}
 			if err != nil {
 				fmt.Printf("Error downloading file %v for bug #%d!\n", comment.attachment.name, bug.id)
 				log.Fatal(err)
@@ -402,21 +398,13 @@ func main() {
 	
 	// Get list of bugs.
 	bugs := getBugs(verbosity, maxBugs, rootUrl)
-	var extensions []string
 	for i, bug := range bugs {
 		if verbosity > 0 {
 			fmt.Printf("Uploading attachments...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
 		}
-		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", &extensions)
+		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt")
 	}
 	fmt.Println("Uploading attachments...Finished!")
-	if verbosity > 0 {
-		fmt.Println("Extensions:")
-		for _, ext := range extensions {
-			fmt.Println(ext)
-		}
-	}
-	
 	if verbosity > 1 {
 		
 		for _, bug := range bugs {
