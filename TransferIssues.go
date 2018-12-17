@@ -347,13 +347,14 @@ func uploadFileFtp(remote, port, webRoot, remoteDir, localFile, user, pass strin
 // org: Name of the organisation/owner of the repo.
 // repo: Name of the GitHub repo to which the bug will be posted.
 // credFile: Path to file on disk containing an access token for a GitHub account.
-func postBug(bug Bug, org, repo, credFile string) {
+// reupload: If true, attachments will be downloaded from BugTracker, and uploaded to another site.
+func postBug(bug Bug, org, repo, credFile string, reupload bool) {
 	//auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
 	//client := octokit.NewClient(auth)
 	tempDir := path.Join(os.TempDir(), "TransferIssues")
 	CreateDirIfNotExist(tempDir)
 	for i, comment := range bug.comments {
-		if comment.attachment != (Attachment{}) {
+		if reupload && comment.attachment != (Attachment{}) {
 			localFile, err := comment.attachment.Download(tempDir)
 			if err != nil {
 				fmt.Printf("Error downloading file %v for bug #%d!\n", comment.attachment.name, bug.id)
@@ -402,7 +403,9 @@ func main() {
 		if verbosity > 0 {
 			fmt.Printf("Uploading attachments...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
 		}
-		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt")
+		// Force attachments to be redownloaded/uploaded by setting the final
+		// paramter to true.
+		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", false)
 	}
 	fmt.Println("Uploading attachments...Finished!")
 	if verbosity > 1 {
