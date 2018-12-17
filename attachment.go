@@ -18,7 +18,7 @@ type Attachment struct {
 func (a *Attachment) ToString() string {
 	var str strings.Builder
 	
-	str.WriteString(fmt.Sprintf("![%v](%v)\n", a.name, a.url))
+	str.WriteString(fmt.Sprintf("[%v](%v)\n", a.name, a.url))
 	str.WriteString(fmt.Sprintf("Size: %d", a.size))
 	return str.String()
 }
