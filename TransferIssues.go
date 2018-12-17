@@ -280,7 +280,7 @@ func getBugs(verbosity, n int, url string) (bugs []Bug) {
 
 // Reads credentials from a text file.
 func getCredentials() (username string, password string) {
-	credentials, err := ioutil.ReadFile("credentials.dat")
+	credentials, err := ioutil.ReadFile("credentials.txt")
 	
 	if err != nil {
 		log.Fatal(err)
@@ -373,6 +373,7 @@ func main() {
 	rootUrl := "https://www.apsim.info/BugTracker/"
 	verbosity := 1
 	maxBugs := -1
+	doupload := false
 	// Process command line arguments.
 	for i := 0; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -394,6 +395,8 @@ func main() {
 			} else {
 				log.Fatal(fmt.Sprintf("Error: %v argument provided, but no value provided!", arg))
 			}
+		} else if arg == "--do-upload" {
+			doupload = true
 		}
 	}
 	
@@ -405,7 +408,7 @@ func main() {
 		}
 		// Force attachments to be redownloaded/uploaded by setting the final
 		// paramter to true.
-		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", false)
+		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
 	}
 	fmt.Println("Uploading attachments...Finished!")
 	if verbosity > 1 {
