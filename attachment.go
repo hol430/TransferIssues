@@ -49,8 +49,13 @@ func (a *Attachment) downloadFile(path string, url string) (string, error) {
 	return path, nil
 }
 
+// Gets the sanitised filename.
+func (a *Attachment) GetCleanFileName() string {
+	return strings.Replace(a.name, " ", "_", -1)
+}
+
 // Downlaods the attachment to a given directory.
 // dir: File will be downloaded to this directory.
 func (a *Attachment) Download(dir string) (string, error) {
-	return a.downloadFile(path.Join(dir, strings.Replace(a.name, " ", "_", -1)), a.url)
+	return a.downloadFile(path.Join(dir, a.GetCleanFileName()), a.url)
 }

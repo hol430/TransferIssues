@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
     "fmt"
-	//"github.com/octokit/go-octokit/octokit"
+	"github.com/octokit/go-octokit/octokit"
 	"github.com/jlaffaye/ftp"
 	"github.com/PuerkitoBio/goquery"
 	"io/ioutil"
@@ -23,12 +23,6 @@ const dateFormat = "1/2/2006 3:4:5 PM"
 const commentDateFormat =  "2006-1-2 3:4 PM"
 // There is one comment which is a special snowflake.
 const shortCommentDateFormat = "2006-1-2"
-
-// GitHub OAuth Authorization URL
-const authorisationUrl =  "http://github.com/login/oauth/authorize"
-
-// GitHub OAuth Access Token URL
-const accessTokenUrl =  "https://github.com/login/oauth/access_token"
 
 var blacklistedComments = []int64{ 686, 688, 32121, 32124, 32125, 32284, 32287, 32295, 32311, 32331, 32355, 32380, 32394, 32396, 32397, 32420, 32479, 32544, 32605, 32683, 32717, 32774, 32775, 32848, 32767, 32938, 32939, 32984, 33012, 33438, 33552, 33888, 33926, 33950, 33951, 34103, 34108, 34109, 34113, 34116, 34128, 34131, 34132, 33525, 33542, 33666, 33945, 33955, 34122, 34134 }
 
@@ -349,21 +343,60 @@ func uploadFileFtp(remote, port, webRoot, remoteDir, localFile, user, pass strin
 // credFile: Path to file on disk containing an access token for a GitHub account.
 // reupload: If true, attachments will be downloaded from BugTracker, and uploaded to another site.
 func postBug(bug Bug, org, repo, credFile string, reupload bool) {
-	//auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
-	//client := octokit.NewClient(auth)
+	auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	client := octokit.NewClient(auth)
+	params := octokit.IssueParams {
+		Title: bug.description,
+		Body: bug.ToString(),
+	}
+	issue, result := client.Issues().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic"}, params)
+	
+	for result.HasError() {
+		if strings.Contains(result.Error(), "You have triggered an abuse detection mechanism and have been temporarily blocked from content creation.") {
+			fmt.Printf("Triggered abuse detection mechanism on bug ID %d\n", bug.id)
+			time.Sleep(time.Second * 20)
+			issue, result = client.Issues().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic"}, params)
+		} else {
+			log.Fatal(result)
+		}
+	}
+	if result.RateLimitRemaining() < 10 {
+		time.Sleep(time.Hour)
+	}
 	tempDir := path.Join(os.TempDir(), "TransferIssues")
 	CreateDirIfNotExist(tempDir)
+	host := "www.apsim.info"
+	port := "21"
+	webRoot := "APSIM"
 	for i, comment := range bug.comments {
-		if reupload && comment.attachment != (Attachment{}) {
-			localFile, err := comment.attachment.Download(tempDir)
-			if err != nil {
-				fmt.Printf("Error downloading file %v for bug #%d!\n", comment.attachment.name, bug.id)
-				log.Fatal(err)
+		if i > 0 { // temporary hack
+			// Deal with any attachments.
+			if comment.attachment != (Attachment{}) {
+				remoteDir := "BugAttachments/" + strconv.Itoa(int(comment.id))
+				bug.comments[i].attachment.url = strings.Trim(host, "/") + "/" + remoteDir + "/" + bug.comments[i].attachment.GetCleanFileName()
+				if reupload {
+					localFile, err := comment.attachment.Download(tempDir)
+					if err != nil {
+						fmt.Printf("Error downloading file %v for bug #%d!\n", comment.attachment.name, bug.id)
+						log.Fatal(err)
+					}
+					user, pass := getCredentials()
+					
+					bug.comments[i].attachment.url, err = uploadFileFtp(host, port, webRoot, remoteDir, localFile, user, pass)
+					if err != nil {
+						log.Fatal(err)
+					}
+				}
 			}
-			user, pass := getCredentials()
-			bug.comments[i].attachment.url, err = uploadFileFtp("www.apsim.info", "21", "APSIM", "BugAttachments/" + strconv.Itoa(int(comment.id)), localFile, user, pass)
-			if err != nil {
-				log.Fatal(err)
+			input := octokit.M{"body": comment.ToString()}
+			_, result := client.IssueComments().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "number": issue.Number}, input)
+			if result.HasError() {
+				log.Fatal(result)
+			}
+			if result.RateLimitRemaining() < 10 {
+				time.Sleep(time.Hour)
+			} else {
+				time.Sleep(time.Second * 10)
 			}
 		}
 	}
@@ -404,17 +437,23 @@ func main() {
 	bugs := getBugs(verbosity, maxBugs, rootUrl)
 	for i, bug := range bugs {
 		if verbosity > 0 {
-			fmt.Printf("Uploading attachments...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
+			fmt.Printf("Posting bugs...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
 		}
 		// Force attachments to be redownloaded/uploaded by setting the final
 		// paramter to true.
-		postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
+		if bug.id > 505 { // resume from where we left off
+			postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
+			// Wait 10 seconds between posting each bug to avoid triggering
+			// an API abuse error.
+			time.Sleep(time.Second * 10)
+		}
 	}
 	fmt.Println("Uploading attachments...Finished!")
 	if verbosity > 1 {
 		
 		for _, bug := range bugs {
-			fmt.Println(bug.ToLongString())
+			fmt.Printf("%s\n", bug.description)
+			fmt.Println(bug.ToString())
 			fmt.Println("--------------------------------------------")
 		}
 	}

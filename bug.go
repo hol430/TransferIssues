@@ -22,10 +22,14 @@ type Bug struct {
 func (b *Bug) ToString() string {
 	var str strings.Builder
 	
-	str.WriteString(fmt.Sprintf("Bug #%d\n", b.id))
+	str.WriteString(fmt.Sprintf("Legacy Bug ID: %d\n", b.id))
 	str.WriteString(fmt.Sprintf("Author: %v\n", b.author))
 	str.WriteString(fmt.Sprintf("Date: %v\n", b.date))
-	str.WriteString(fmt.Sprintf("Title: %v\n\n", b.description))
+	//str.WriteString(fmt.Sprintf("Title: %v\n\n", b.description))
+	if len(b.comments) > 0 {
+		// The first comment on the bug tracker site contains the actual description of the bug.
+		str.WriteString(fmt.Sprintf("\n%v\n", b.comments[0].text))
+	}
 	return str.String()
 }
 
