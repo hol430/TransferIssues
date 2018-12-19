@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"math/rand"
+	"regexp"
 	"strings"
 	"strconv"
 	"time"
@@ -420,12 +421,66 @@ func postBug(bug Bug, org, repo, credFile string, reupload bool) {
 	}
 }
 
+// I forgot to put https:// in front of attachment links. This function goes
+// through all issues in the repository and fixes this mistake.
+func fixLinks(credFile string, verbosity int) {
+	re := regexp.MustCompile(`(\[[^\]]+\])\(www.apsim.info`)
+	replaceRegex := "$1(https://www.apsim.info"
+	auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	client := octokit.NewClient(auth)
+	apsimUrl := octokit.Hyperlink("repos/APSIMInitiative/APSIMClassic/issues")
+	first := true
+	numIssues := -1
+	var progress float64
+	for {
+		issues, result := client.Issues().All(&apsimUrl, nil)
+		if result.HasError() {
+			log.Fatal(result)
+		}
+		for _, issue := range issues {
+			if first {
+				first = false
+				numIssues = issue.Number
+			}
+			progress = 100.0 * float64(numIssues - issue.Number) / float64(numIssues)
+			fmt.Printf("Fixing links...%.2f%%\r", progress)
+			comments, result := client.IssueComments().All(&octokit.IssueCommentsURL, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "number": issue.Number})
+			if result.HasError() {
+				log.Fatal(result)
+			}
+			for _, comment := range comments {
+				if re.MatchString(comment.Body) {
+					if verbosity > 1 {
+						fmt.Printf("Updating comment %d on bug %d\n", comment.ID, issue.Number)
+					}
+					comment.Body = re.ReplaceAllString(comment.Body, replaceRegex)
+					fmt.Printf("Replacing comment on bug %d with:\n%s\n", issue.Number, comment.Body)
+					input := octokit.M{"body": comment.Body}
+					m := octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "id": comment.ID}
+					_, result = client.IssueComments().Update(nil, m, input)
+					if result.HasError() {
+						log.Fatal(result)
+					} else if result.RateLimitRemaining() < 10 {
+						time.Sleep(time.Hour)
+					}
+				}
+			}
+		}
+		if result.NextPage == nil {
+			break
+		}
+		apsimUrl = *result.NextPage
+	}
+	fmt.Printf("Fixing links...Finished!")
+}
+
 func main() {
 	rand.Seed(time.Now().Unix())
 	rootUrl := "https://www.apsim.info/BugTracker/"
 	verbosity := 1
 	maxBugs := -1
 	doupload := false
+	fixlinks := false
 	// Process command line arguments.
 	for i := 0; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -449,9 +504,15 @@ func main() {
 			}
 		} else if arg == "--reupload" {
 			doupload = true
+		} else if arg == "--fix-links" {
+			fixlinks = true
 		}
 	}
-	
+	if fixlinks {
+		fixLinks("secret.txt", verbosity)
+		os.Exit(0)
+	}
+	fmt.Printf("doupload=%v\n", doupload)
 	// Get list of bugs.
 	bugs := getBugs(verbosity, maxBugs, rootUrl)
 	for i, bug := range bugs {
@@ -460,7 +521,7 @@ func main() {
 		}
 		// Force attachments to be redownloaded/uploaded by setting the final
 		// paramter to true.
-		if bug.id > 1472 { // resume from where we left off
+		if bug.id >= 0 { // Use this to resume from a failed/aborted execution.
 			postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
 			// Wait 10 seconds between posting each bug to avoid triggering
 			// an API abuse error.

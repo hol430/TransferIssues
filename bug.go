@@ -26,6 +26,7 @@ func (b *Bug) ToString() string {
 	str.WriteString(fmt.Sprintf("Author: %v\n", b.author))
 	str.WriteString(fmt.Sprintf("Date: %v\n", b.date))
 	//str.WriteString(fmt.Sprintf("Title: %v\n\n", b.description))
+	str.WriteString(fmt.Sprintf("Status: %s\n", b.status))
 	if len(b.comments) > 0 {
 		// The first comment on the bug tracker site contains the actual description of the bug.
 		str.WriteString(fmt.Sprintf("\n%v\n", b.comments[0].text))
