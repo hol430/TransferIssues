@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"math/rand"
 	"strings"
 	"strconv"
 	"time"
@@ -336,6 +337,14 @@ func uploadFileFtp(remote, port, webRoot, remoteDir, localFile, user, pass strin
 	return strings.Trim(remote, "/") + "/" + remotePath, nil
 }
 
+// Pauses execution for a random duration.
+// min - minimum duration (in seconds).
+// max - maximum duration (in seconds).
+func randomSleep(min, max int) {
+	ms := min * 1000 + rand.Intn((max - min) * 1000)
+	time.Sleep(time.Duration(ms * int(time.Millisecond)))
+}
+
 // Posts a bug on GitHub
 // bug: The bug to be posted on GitHub.
 // org: Name of the organisation/owner of the repo.
@@ -352,9 +361,11 @@ func postBug(bug Bug, org, repo, credFile string, reupload bool) {
 	issue, result := client.Issues().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic"}, params)
 	
 	for result.HasError() {
+		fmt.Printf("Encountered an error when attempting to post bug #%d\n", bug.id)
+		fmt.Printf("result.Error(): \"%v\"\n", result.Error())
 		if strings.Contains(result.Error(), "You have triggered an abuse detection mechanism and have been temporarily blocked from content creation.") {
 			fmt.Printf("Triggered abuse detection mechanism on bug ID %d\n", bug.id)
-			time.Sleep(time.Second * 20)
+			randomSleep(60, 120)
 			issue, result = client.Issues().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic"}, params)
 		} else {
 			log.Fatal(result)
@@ -388,21 +399,29 @@ func postBug(bug Bug, org, repo, credFile string, reupload bool) {
 					}
 				}
 			}
-			input := octokit.M{"body": comment.ToString()}
+			input := octokit.M{"body": bug.comments[i].ToString()}
 			_, result := client.IssueComments().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "number": issue.Number}, input)
-			if result.HasError() {
-				log.Fatal(result)
+			for result.HasError() {
+				fmt.Printf("Encountered an error when attempting to post comment #%d\n", comment.id)
+				fmt.Printf("result.Error(): \"%v\"\n", result.Error())
+				if strings.Contains(result.Error(), "You have triggered an abuse detection mechanism and have been temporarily blocked from content creation.") {
+					randomSleep(60, 120)
+					_, result = client.IssueComments().Create(nil, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "number": issue.Number}, input)
+				} else {
+					log.Fatal(result)
+				}
 			}
 			if result.RateLimitRemaining() < 10 {
 				time.Sleep(time.Hour)
 			} else {
-				time.Sleep(time.Second * 10)
+				randomSleep(5, 10)
 			}
 		}
 	}
 }
 
 func main() {
+	rand.Seed(time.Now().Unix())
 	rootUrl := "https://www.apsim.info/BugTracker/"
 	verbosity := 1
 	maxBugs := -1
@@ -428,7 +447,7 @@ func main() {
 			} else {
 				log.Fatal(fmt.Sprintf("Error: %v argument provided, but no value provided!", arg))
 			}
-		} else if arg == "--do-upload" {
+		} else if arg == "--reupload" {
 			doupload = true
 		}
 	}
@@ -441,11 +460,11 @@ func main() {
 		}
 		// Force attachments to be redownloaded/uploaded by setting the final
 		// paramter to true.
-		if bug.id > 505 { // resume from where we left off
+		if bug.id > 1472 { // resume from where we left off
 			postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
 			// Wait 10 seconds between posting each bug to avoid triggering
 			// an API abuse error.
-			time.Sleep(time.Second * 10)
+			randomSleep(5, 10)
 		}
 	}
 	fmt.Println("Uploading attachments...Finished!")
