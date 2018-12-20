@@ -586,7 +586,7 @@ func closeIssue(owner, repo, credFile string, id int) {
 	_, result := client.Issues().Update(nil, m, params)
 	if result.HasError() {
 		log.Fatal(result)
-	} else if result.RateLimitRemaining < 5 {
+	} else if result.RateLimitRemaining() < 5 {
 		fmt.Println("GitHub API rate limit exceeded. Waiting for one hour...")
 		time.Sleep(time.Hour)
 		fmt.Println("One hour has elapsed. Resuming execution...")
@@ -619,6 +619,67 @@ func closeIssues(rootUrl, credFile string, verbosity, maxBugs int) {
 	}
 }
 
+// Fixes formatting of bugs which incorrectly have tabs inserted in them.
+func fixFormatting(credFile string, verbosity, n int) {
+	auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	client := octokit.NewClient(auth)
+	var m octokit.M
+	owner := "APSIMInitiative"
+	repo := "APSIMClassic"
+	issues := getGithubIssues(owner, repo, credFile, n)
+	numIssues := len(issues)
+	var progress float64
+	for i, issue := range issues {
+		progress = 100.0 * float64(i) / float64(numIssues)
+		fmt.Printf("Fixing formatting: %.2f%%\r", progress)
+		if strings.Contains(issue.Body, "\t") {
+			newBody := strings.Replace(issue.Body, "\t", "", -1)
+			if verbosity > 1 {
+				fmt.Printf("Replacing tabs in Bug #%d\n", issue.Number)
+				if verbosity > 2 {
+					fmt.Printf("\"%s\"\n", issue.Body)
+					fmt.Printf("\"%s\"\n", newBody)
+					fmt.Println("------------------------------------------------")
+				}
+			}
+			m = octokit.M{"owner": owner, "repo": repo, "number": issue.Number}
+			params := octokit.IssueParams {Body: newBody}
+			_, result := client.Issues().Update(nil, m, params)
+			if result.HasError() {
+				log.Fatal(result)
+			} else if result.RateLimitRemaining() < 5 {
+				fmt.Println("GitHub API rate limit exceeded. Waiting for one hour...")
+				time.Sleep(time.Hour)
+				fmt.Println("One hour has elapsed. Resuming execution...")
+			}
+		}
+		
+		// Fix formatting for comments on this issue
+		comments, result := client.IssueComments().All(&octokit.IssueCommentsURL, octokit.M{"owner": owner, "repo": repo, "number": issue.Number})
+		if result.HasError() {
+			log.Fatal(result)
+		}
+		for commentNo, comment := range comments {
+			if strings.Contains(comment.Body, "\t") {
+				if verbosity > 1 {
+					fmt.Printf("Updating comment %d of issue #%d\n", commentNo + 1, issue.Number)
+				}
+				newCommentBody := strings.Replace(comment.Body, "\t", "", -1)
+				m = octokit.M{"owner": owner, "repo": repo, "id": comment.ID}
+				params := octokit.M{"body": newCommentBody}
+				_, result = client.IssueComments().Update(nil, m, params)
+				if result.HasError() {
+					log.Fatal(result)
+				} else if result.RateLimitRemaining() < 5 {
+					fmt.Println("GitHub API rate limit exceeded. Waiting for one hour...")
+					time.Sleep(time.Hour)
+					fmt.Println("One hour has elapsed. Resuming execution...")
+				}
+			}
+		}
+	}
+}
+
 func main() {
 	rand.Seed(time.Now().Unix())
 	rootUrl := "https://www.apsim.info/BugTracker/"
@@ -627,6 +688,7 @@ func main() {
 	doupload := false
 	fixlinks := false
 	closeissues := false
+	fixformatting := false
 	// Process command line arguments.
 	for i := 0; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -654,13 +716,17 @@ func main() {
 			fixlinks = true
 		} else if arg == "--close-issues" {
 			closeissues = true
+		} else if arg == "--fix-formatting" {
+			fixformatting = true
 		}
 	}
 	if fixlinks {
 		fixLinks("secret.txt", verbosity)
 	} else if closeissues {
 		closeIssues(rootUrl, "secret.txt", verbosity, maxBugs)
-	} else {
+	} else if fixformatting {
+		fixFormatting("secret.txt", verbosity, maxBugs)
+	}else {
 		fmt.Printf("doupload=%v\n", doupload)
 		// Get list of bugs.
 		bugs := getBugs(verbosity, maxBugs, rootUrl)

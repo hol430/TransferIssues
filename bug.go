@@ -50,5 +50,5 @@ func (b *Bug) ToLongString() string {
 }
 
 func (b *Bug) IsClosed() bool {
-	return strings.ToLower(b.status) == "closed"
+	return strings.ToLower(b.status) == "closed" || strings.ToLower(b.status) == "4_Review"
 }
