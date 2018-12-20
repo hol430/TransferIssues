@@ -246,6 +246,9 @@ func getBugs(verbosity, n int, url string) (bugs []Bug) {
 		// Skip the first row of the table, as it doesn't contain bugs.
 		if index > 0 && index < numBugs {
 			bugId := parseInt(row.Find("td:nth-child(1)").Text())
+			if bugId > 2000 {
+				return
+			}
 			bugDate, err := time.Parse(dateFormat , row.Find("td:nth-child(8)").Text())
 			if err != nil {
 				fmt.Printf("Error parsing date in bug #%d\n", bugId)
@@ -523,6 +526,88 @@ func fixLinks(credFile string, verbosity int) {
 	fmt.Printf("Fixing links...Finished!")
 }
 
+func fixLinksv2(credFile, rootUrl string, verbosity, n int) {
+	bugs := getBugs(verbosity, n, rootUrl)
+	re := regexp.MustCompile(`\[([^\]]+)\]\(https://www.apsim.info/BugTracker[^\)]+\)`)
+	
+	auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	client := octokit.NewClient(auth)
+	apsimUrl := octokit.Hyperlink("repos/APSIMInitiative/APSIMClassic/issues")
+	first := true
+	numIssues := -1
+	var progress float64
+	for {
+		issues, result := client.Issues().All(&apsimUrl, nil)
+		if result.HasError() {
+			log.Fatal(result)
+		}
+		for _, issue := range issues {
+			if first {
+				first = false
+				numIssues = issue.Number
+			}
+			progress = 100.0 * float64(numIssues - issue.Number) / float64(numIssues)
+			fmt.Printf("Fixing links...%.2f%%\r", progress)
+			comments, result := client.IssueComments().All(&octokit.IssueCommentsURL, octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "number": issue.Number})
+			if result.HasError() {
+				log.Fatal(result)
+			}
+			for i, comment := range comments {
+				if re.MatchString(comment.Body) {
+					if verbosity > 1 {
+						fmt.Printf("Match found for comment %d on bug %d\n", i + 1, issue.Number)
+					}
+					matches := re.FindStringSubmatch(comment.Body)
+					if len(matches) >= 2 {
+						legacyId := getLegacyId(issue)
+						var bug Bug
+						if legacyId >= 0 {
+							bug = getBugFromId(bugs, legacyId)
+						} else {
+							bug = getBugFromTitle(bugs, issue.Title)
+						}
+						legacyComment := getCommentWithContent(bug.comments, matches[1])
+						
+						attachmentName := strings.Replace(matches[1], " ", "_", -1)
+						replaceRegex := fmt.Sprintf("[$1](https://www.apsim.info/BugAttachments/%d/%s)", legacyComment.id, attachmentName)
+						newBody := re.ReplaceAllString(comment.Body, replaceRegex)
+						
+						input := octokit.M{"body": newBody}
+						m := octokit.M{"owner": "APSIMInitiative", "repo": "APSIMClassic", "id": comment.ID}
+						_, result = client.IssueComments().Update(nil, m, input)
+						if result.HasError() {
+							log.Fatal(result)
+						} else if result.RateLimitRemaining() < 10 {
+							time.Sleep(time.Hour)
+						}
+					} else if verbosity > 1 {
+						fmt.Printf("Number of matches: %d\n", len(matches))
+					}
+				} else if verbosity > 1 {
+						fmt.Printf("No match found for comment %d on bug #%d\n", i + 1, issue.Number)
+				}
+			}
+		}
+		if result.NextPage == nil {
+			break
+		}
+		apsimUrl = *result.NextPage
+	}
+	fmt.Printf("Fixing links...Finished!")
+}
+
+func getCommentWithContent(comments []Comment, content string) Comment {
+	for _, comment := range comments {
+		if strings.Contains(comment.text, content) {
+			return comment
+		}
+	}
+	for _, comment := range comments {
+		fmt.Printf("Comment: %s\n", comment.text)
+	}
+	panic(fmt.Sprintf("Unable to get comment with a content %s.", content))
+}
+
 func getLegacyId(issue octokit.Issue) int {
 	// This is the syntax which will be used in most issues.
 	re := regexp.MustCompile(`Legacy Bug ID: (\d+)`)
@@ -689,6 +774,7 @@ func main() {
 	fixlinks := false
 	closeissues := false
 	fixformatting := false
+	fixlinks2 := false
 	// Process command line arguments.
 	for i := 0; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -718,10 +804,14 @@ func main() {
 			closeissues = true
 		} else if arg == "--fix-formatting" {
 			fixformatting = true
+		} else if arg == "--fix-links2" {
+			fixlinks2 = true
 		}
 	}
 	if fixlinks {
 		fixLinks("secret.txt", verbosity)
+	} else if fixlinks2 {
+		fixLinksv2("secret.txt", rootUrl, verbosity, maxBugs)
 	} else if closeissues {
 		closeIssues(rootUrl, "secret.txt", verbosity, maxBugs)
 	} else if fixformatting {
