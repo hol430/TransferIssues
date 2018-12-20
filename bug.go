@@ -48,3 +48,7 @@ func (b *Bug) ToLongString() string {
 	}
 	return str.String()
 }
+
+func (b *Bug) IsClosed() bool {
+	return strings.ToLower(b.status) == "closed"
+}

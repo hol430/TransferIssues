@@ -419,6 +419,55 @@ func postBug(bug Bug, org, repo, credFile string, reupload bool) {
 			}
 		}
 	}
+	if bug.IsClosed() {
+		closeIssue(org, repo, credFile, issue.Number)
+	}
+}
+
+func getGithubIssues(owner, repo, credFile string, max int) (issues []octokit.Issue) {
+	// Initialise github client
+	auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	client := octokit.NewClient(auth)
+	url := octokit.Hyperlink(fmt.Sprintf("repos/%s/%s/issues", owner, repo))
+	
+	// A few state variables
+	first := true
+	numIssues := 0
+	var progress float64
+	for {
+		bugs, result := client.Issues().All(&url, nil)
+		if result.HasError() {
+			log.Fatal(result)
+		}
+		
+		if first {
+			// First time through we record the issue number.
+			// This is used to calculate progress each iteration.
+			first = false
+			if len(bugs) > 0 {
+				numIssues = bugs[0].Number
+				if max < 0 {
+					max = numIssues
+				}
+			}
+		}
+		if len(bugs) > 0 {
+			progress = 100.0 * float64(numIssues - bugs[0].Number) / float64(numIssues)
+		}
+		fmt.Printf("Fetching GitHub issues: %.2f%%\r", progress)
+		issues = append(issues, bugs...)
+		if result.NextPage == nil || len(issues) >= max{
+			break
+		}
+		url = *result.NextPage
+		if result.RateLimitRemaining() < 5 {
+			fmt.Println("Rate limit exceeded. Sleeping for one hour...")
+			time.Sleep(time.Hour)
+			fmt.Println("One hour has elapsed. Resuming execution...")
+		}
+	}
+	fmt.Printf("Fetching GitHub issues...Finished!\n")
+	return
 }
 
 // I forgot to put https:// in front of attachment links. This function goes
@@ -474,6 +523,102 @@ func fixLinks(credFile string, verbosity int) {
 	fmt.Printf("Fixing links...Finished!")
 }
 
+func getLegacyId(issue octokit.Issue) int {
+	// This is the syntax which will be used in most issues.
+	re := regexp.MustCompile(`Legacy Bug ID: (\d+)`)
+	matches := re.FindStringSubmatch(issue.Body)
+	if len(matches) >= 2 {
+		id, err := strconv.Atoi(matches[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+		return id
+	}
+	
+	// Older versions of this program used this syntax.
+	re = regexp.MustCompile(`Bug #(\d+)`)
+	matches = re.FindStringSubmatch(issue.Body)
+	if len(matches) >= 2 {
+		id, err := strconv.Atoi(matches[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+		return id
+	}
+	fmt.Printf("Warning: Unable to determine legacy bug ID for GitHub Issue #%d\n", issue.Number)
+	fmt.Printf("Resorting to title match.\n")
+	return -1
+}
+
+// Finds the bug with the given ID.
+// bugs: list of bugs.
+// id: ID of the bug.
+func getBugFromId(bugs []Bug, id int) Bug {
+	for _, issue := range bugs {
+		if issue.id == int64(id) {
+			return issue
+		}
+	}
+	panic(fmt.Sprintf("Unable to find bug with ID %d\n", id))
+}
+
+// Finds the bug with the given title.
+// bugs: list of bugs.
+// title: Title of the bug.
+func getBugFromTitle(bugs []Bug, title string) Bug {
+	for _, bug := range bugs {
+		if bug.description == title {
+			return bug
+		}
+	}
+	panic(fmt.Sprintf("Unable to find bug with title %s\n", title))
+}
+// Closes a GitHub issue
+// owner: Owner of the repo.
+// repo: Name of the repo.
+// credFile: path to a file on disk containing a github personal access token.
+// id: ID of the issue to close.
+func closeIssue(owner, repo, credFile string, id int) {
+	auth := octokit.TokenAuth{AccessToken: getSecret(credFile)}
+	client := octokit.NewClient(auth)
+	m := octokit.M{"owner": owner, "repo": repo, "number": id}
+	params := octokit.IssueParams{State: "closed"}
+	_, result := client.Issues().Update(nil, m, params)
+	if result.HasError() {
+		log.Fatal(result)
+	} else if result.RateLimitRemaining < 5 {
+		fmt.Println("GitHub API rate limit exceeded. Waiting for one hour...")
+		time.Sleep(time.Hour)
+		fmt.Println("One hour has elapsed. Resuming execution...")
+	}
+}
+
+// Fetches bugs from bug tracker site and for those which are closed,
+// closes their github counterpart.
+// credFile: credentials file containing a github personal access token.
+// verbosity: level of output detail
+func closeIssues(rootUrl, credFile string, verbosity, maxBugs int) {
+	owner := "APSIMInitiative"
+	repo := "APSIMClassic"
+	issues := getGithubIssues(owner, repo, credFile, maxBugs)
+	bugTrackerIssues := getBugs(verbosity, maxBugs, rootUrl)
+	for _, issue := range issues {
+		legacyId := getLegacyId(issue)
+		var legacyIssue Bug
+		if legacyId >= 0 {
+			legacyIssue = getBugFromId(bugTrackerIssues, legacyId)	
+		} else {
+			legacyIssue = getBugFromTitle(bugTrackerIssues, issue.Title)
+		}
+		if legacyIssue.IsClosed() && strings.ToLower(issue.State) != "closed" {
+			fmt.Printf("Closing issue %d (#%d - %s)\n", legacyId, issue.Number, issue.State)
+			closeIssue(owner, repo, credFile, issue.Number)
+		} else {
+			fmt.Printf("Skipping issue %d (#%d - %s)\n", legacyId, issue.Number, issue.State)
+		}
+	}
+}
+
 func main() {
 	rand.Seed(time.Now().Unix())
 	rootUrl := "https://www.apsim.info/BugTracker/"
@@ -481,6 +626,7 @@ func main() {
 	maxBugs := -1
 	doupload := false
 	fixlinks := false
+	closeissues := false
 	// Process command line arguments.
 	for i := 0; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -506,35 +652,39 @@ func main() {
 			doupload = true
 		} else if arg == "--fix-links" {
 			fixlinks = true
+		} else if arg == "--close-issues" {
+			closeissues = true
 		}
 	}
 	if fixlinks {
 		fixLinks("secret.txt", verbosity)
-		os.Exit(0)
-	}
-	fmt.Printf("doupload=%v\n", doupload)
-	// Get list of bugs.
-	bugs := getBugs(verbosity, maxBugs, rootUrl)
-	for i, bug := range bugs {
-		if verbosity > 0 {
-			fmt.Printf("Posting bugs...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
+	} else if closeissues {
+		closeIssues(rootUrl, "secret.txt", verbosity, maxBugs)
+	} else {
+		fmt.Printf("doupload=%v\n", doupload)
+		// Get list of bugs.
+		bugs := getBugs(verbosity, maxBugs, rootUrl)
+		for i, bug := range bugs {
+			if verbosity > 0 {
+				fmt.Printf("Posting bugs...%.2f%%\r", float64(i) / float64(len(bugs)) * 100.0)
+			}
+			// Force attachments to be redownloaded/uploaded by setting the final
+			// paramter to true.
+			if bug.id >= 0 { // Use this to resume from a failed/aborted execution.
+				postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
+				// Wait 10 seconds between posting each bug to avoid triggering
+				// an API abuse error.
+				randomSleep(5, 10)
+			}
 		}
-		// Force attachments to be redownloaded/uploaded by setting the final
-		// paramter to true.
-		if bug.id >= 0 { // Use this to resume from a failed/aborted execution.
-			postBug(bug, "APSIMInitiative", "APSIMClassic", "secret.txt", doupload)
-			// Wait 10 seconds between posting each bug to avoid triggering
-			// an API abuse error.
-			randomSleep(5, 10)
-		}
-	}
-	fmt.Println("Uploading attachments...Finished!")
-	if verbosity > 1 {
-		
-		for _, bug := range bugs {
-			fmt.Printf("%s\n", bug.description)
-			fmt.Println(bug.ToString())
-			fmt.Println("--------------------------------------------")
+		fmt.Println("Uploading attachments...Finished!")
+		if verbosity > 1 {
+			
+			for _, bug := range bugs {
+				fmt.Printf("%s\n", bug.description)
+				fmt.Println(bug.ToString())
+				fmt.Println("--------------------------------------------")
+			}
 		}
 	}
 }
